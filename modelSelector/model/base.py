@@ -31,6 +31,8 @@ class ModelBase(ABC):
         self.n_params = 0
         self.parameter_indices_free = []
 
+        # print("Initializing model with id: ", self.id)
+
         for i, letter in enumerate(self.id[2:]):
             if letter == "1":
                 self.n_params += 1
@@ -117,3 +119,23 @@ class ModelBase(ABC):
             res.append(type(self)(id_str))
 
         return res
+
+@dataclass
+class SalientModelBase(ModelBase):
+    """Base class for all differential models."""
+
+    def __init__(self, id_str: str):
+        super().__init__(id_str)
+
+    @abstractmethod
+    def get_submodel_saliencies(self, **kwargs): 
+        """
+        Get the saliency for each of the model's submodels.
+
+        Parameters:
+        kwargs, i.e. key word arguments.
+            handed over, e.g. within model selection.
+        Returns:
+        dict
+            Array of the saliency values for each parameter (in parameter order)   
+        """    

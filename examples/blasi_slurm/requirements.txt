@@ -1,0 +1,4 @@
+pypesto==0.5.8
+petab==0.7.0
+fides==0.8.2
+pandas==2.3.3

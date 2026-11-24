@@ -118,16 +118,16 @@ def _get_excluded_model_ids_set(model_id: str, n_params_to_delete: int) -> List[
     n_params_to_delete = min(n_params_to_delete, _get_n_params_from_id(model_id))
     param_ids = [i for i, param_id in enumerate(model_id) if param_id == '1']
 
-    result_set = []
+    result_set = set()
 
     for n_to_delete in range(1, n_params_to_delete+1):
         for comb in itertools.combinations(param_ids, n_to_delete):
             model_id_copy = list(model_id)
             for i in comb:
                 model_id_copy[i] = '0'
-                result_set.append(''.join(model_id_copy))
+                result_set.add(''.join(model_id_copy))
 
-    return result_set
+    return list(result_set)
 
 
 def _get_n_params_from_id(model_id: str):
