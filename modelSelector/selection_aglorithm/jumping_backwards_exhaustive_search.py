@@ -220,8 +220,9 @@ def jumping_backwards_exhaustive_search(
             prefix |= bit
             if prefix in candidates:
                 fit_candidate(prefix)
+                if (~prefix) in candidates:
+                    fit_candidate(~prefix)
                 number_of_jumps += 1
-                break
 
         if improvement is not None:
             current_mask, current_model, current_score = improvement
