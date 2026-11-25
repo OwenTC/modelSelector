@@ -111,7 +111,7 @@ class PackedSearchTests(unittest.TestCase):
         self.assertIsNone(result["M_10"])
         self.assertNotIn("M_10", visits)
 
-    def test_jump_skips_a_prefix_excluded_during_calibration(self):
+    def test_new_exclusions_do_not_skip_siblings_but_still_apply_to_the_jump(self):
         class RankedModel(ScoredModel):
             def get_submodel_saliencies(self):
                 return [(index, 0.5 if index < 2 else 0.0) for index in self.parameter_indices_free]
@@ -121,7 +121,7 @@ class PackedSearchTests(unittest.TestCase):
         result, _ = jumping_backwards_exhaustive_search(
             RankedModel("M_1111"), scores=scores, visits=visits,
         )
-        self.assertEqual(visits[:5], ["M_1111", "M_0111", "M_1011", "M_1101", "M_1100"])
+        self.assertEqual(visits[:6], ["M_1111", "M_0111", "M_1011", "M_1101", "M_1110", "M_1100"])
         self.assertIsNone(result["M_1000"])
         self.assertEqual(result.get_best_model(), ("M_1100", 4.0))
 
@@ -131,5 +131,5 @@ class PackedSearchTests(unittest.TestCase):
         result, _ = jumping_backwards_exhaustive_search(
             ScoredModel("M_1111"), scores=scores, visits=visits,
         )
-        self.assertEqual(visits[:7], ["M_1111", "M_0111", "M_1011", "M_1101", "M_1110", "M_1000", "M_1100"])
+        self.assertEqual(visits[:6], ["M_1111", "M_0111", "M_1011", "M_1101", "M_1110", "M_1000"])
         self.assertEqual(result.get_best_model(), ("M_1111", 8.0))

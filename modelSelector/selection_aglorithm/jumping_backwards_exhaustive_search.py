@@ -105,8 +105,8 @@ def jumping_backwards_exhaustive_search(
     """
     Search submodels and return the selection result and jump count.
 
-    Each iteration fits every available one-parameter deletion of the current
-    model, then tries jumps by adding ranked parameters to the empty model.
+    Each iteration fits the one-parameter deletions available at the start
+    of the level, then tries a jump by adding ranked parameters to the empty model.
     Continue from an improving deletion or the largest remaining candidate.
     Supply a fitted supermodel and its score when continuing an existing result.
     Set saliency to a method supported by the model.
@@ -205,13 +205,14 @@ def jumping_backwards_exhaustive_search(
         ranked_bits = [parameter_bits[index] for index, _ in saliencies]
         improvement = None
 
-        # Calibrate the available deletions at this level.
-        for bit in ranked_bits:
-            child = current_mask & ~bit
-            if child in candidates:
-                model, score = fit_candidate(child)
-                if score < current_score:
-                    improvement = child, model, score
+        # A better fit can tighten the bounds. Keep the already selected
+        # deletions so those updates apply to the jump and later levels.
+        children = (current_mask & ~bit for bit in ranked_bits)
+        available_children = [child for child in children if child in candidates]
+        for child in available_children:
+            model, score = fit_candidate(child)
+            if score < current_score:
+                improvement = child, model, score
 
         # Jump after calibrating the deletions.
         prefix = 0
@@ -220,6 +221,7 @@ def jumping_backwards_exhaustive_search(
             if prefix in candidates:
                 fit_candidate(prefix)
                 number_of_jumps += 1
+                break
 
         if improvement is not None:
             current_mask, current_model, current_score = improvement
