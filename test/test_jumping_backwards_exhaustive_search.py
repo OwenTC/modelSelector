@@ -71,6 +71,51 @@ class PackedSearchTests(unittest.TestCase):
         self.assertEqual(list(space._remaining_at_size(0, witness, 9, 9)), [])
         self.assertIn((1 << 19) | ((1 << 8) - 1), space)
 
+    def test_inverse_jump_requires_a_pending_proper_submodel(self):
+        scores = {f"M_{mask:04b}": 1.5 * (4 - bin(mask).count("1")) for mask in range(16)}
+        for has_pending_child in (True, False):
+            with self.subTest(has_pending_child=has_pending_child):
+                visits = []
+                full = ScoredModel("M_1111")
+                full.fit(scores=scores, visits=visits)
+                result = ModelSelectionResult()
+                result["M_1111"] = 8.0
+                result["M_0000"] = 12.0
+                result["M_0010"] = None
+                if not has_pending_child:
+                    result["M_0001"] = None
+
+                result, _ = jumping_backwards_exhaustive_search(
+                    full, result=result, scores=scores, visits=visits,
+                )
+                after_jump = visits[visits.index("M_1100") + 1]
+                self.assertEqual(after_jump == "M_0011", has_pending_child)
+                self.assertIsNotNone(result["M_0011"])
+
+    def test_inverse_can_have_a_pending_descendant_below_its_children(self):
+        space = _CandidateSpace(3)
+        space.discard(0b100)
+        space.discard(0b010)
+        self.assertTrue(space.has_pending_submodels(0b110))
+        space.discard(0)
+        self.assertFalse(space.has_pending_submodels(0b110))
+
+    def test_inverse_jump_uses_the_best_fit_after_all_jump_children(self):
+        weights = (3.0, 3.0, 0.2, 1.1, 1.1)
+        scores = {
+            f"M_{mask:05b}": sum(
+                (weight for index, weight in enumerate(weights) if not mask & (16 >> index)), 0.0
+            )
+            for mask in range(32)
+        }
+        visits = []
+        result, _ = jumping_backwards_exhaustive_search(
+            ScoredModel("M_11111"), scores=scores, visits=visits,
+        )
+        self.assertEqual(visits[6:10], ["M_10000", "M_11000", "M_11100", "M_00111"])
+        self.assertLess(result["M_11000"], result["M_10000"])
+        self.assertLess(result["M_11000"], result["M_11100"])
+
     def test_sparse_search_matches_brute_force_without_duplicate_fits(self):
         weights = {0: 3.0, 2: 0.2, 3: 0.3, 5: 4.0}
         scores = {

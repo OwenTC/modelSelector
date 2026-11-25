@@ -53,6 +53,14 @@ class _CandidateSpace:
         for size in range(len(self.bits), -1, -1):
             yield from self._remaining_at_size(0, self.n_models - 1, size, size)
 
+    def has_pending_submodels(self, mask: int) -> bool:
+        """Check whether any proper submodel remains to be fitted."""
+        largest_size = min(_size(mask) - 1, self.max_size)
+        for size in range(largest_size, -1, -1):
+            if next(self._remaining_at_size(0, mask, size, size), None) is not None:
+                return True
+        return False
+
     def _remaining_at_size(self, selected: int, free: int, needed: int, size: int):
         if size > self.max_size or self.counts[size] == 0 or self._covered(selected | free, size):
             return
@@ -107,6 +115,8 @@ def jumping_backwards_exhaustive_search(
 
     Each iteration fits the one-parameter deletions available at the start
     of the level, then tries a jump by adding ranked parameters to the empty model.
+    Only the best fit in the jump step can trigger an inverse jump, and its
+    inverse must have a proper submodel that is still available.
     Continue from an improving deletion or the largest remaining candidate.
     Supply a fitted supermodel and its score when continuing an existing result.
     Set saliency to a method supported by the model.
@@ -216,13 +226,20 @@ def jumping_backwards_exhaustive_search(
 
         # Jump after calibrating the deletions.
         prefix = 0
+        best_jump = None
         for bit in ranked_bits:
             prefix |= bit
             if prefix in candidates:
-                fit_candidate(prefix)
-                if (~prefix) in candidates:
-                    fit_candidate(~prefix)
+                _, score = fit_candidate(prefix)
+                if best_jump is None or score < fitted[best_jump][0]:
+                    best_jump = prefix
                 number_of_jumps += 1
+
+        if best_jump is not None:
+            inverted = full_mask ^ best_jump
+            if (inverted not in fitted and _size(best_jump) <= _size(inverted)
+                    and candidates.has_pending_submodels(inverted)):
+                fit_candidate(inverted)
 
         if improvement is not None:
             current_mask, current_model, current_score = improvement
