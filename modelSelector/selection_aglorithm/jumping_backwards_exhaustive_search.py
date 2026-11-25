@@ -56,7 +56,8 @@ class _CandidateSpace:
     def has_pending_submodels(self, mask: int) -> bool:
         """Check whether any proper submodel remains to be fitted."""
         largest_size = min(_size(mask) - 1, self.max_size)
-        for size in range(largest_size, -1, -1):
+        # Small levels can establish eligibility without scanning a much larger level.
+        for size in range(largest_size + 1):
             if next(self._remaining_at_size(0, mask, size, size), None) is not None:
                 return True
         return False

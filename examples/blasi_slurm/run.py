@@ -1,6 +1,7 @@
 """Run jumping-backwards model selection for the Blasi model."""
 
 import argparse
+import faulthandler
 import fcntl
 from hashlib import sha256
 from importlib.metadata import version
@@ -24,6 +25,7 @@ from modelSelector.selection_aglorithm.jumping_backwards_exhaustive_search impor
 
 
 DEFAULT_PETAB = Path(__file__).resolve().parent / "inputs/petab/petab_problem.yaml"
+STALL_REPORT_SECONDS = 15 * 60
 
 
 class Paused(Exception):
@@ -83,6 +85,9 @@ class Checkpoint:
         if (model_id not in self.scores and self.max_new_fits is not None
                 and self.new_fits >= self.max_new_fits):
             raise Paused("reached --max-new-fits")
+        logging.info("Starting fit %s", model_id)
+        # Keep the timer active through the fit and the search for the next model.
+        faulthandler.dump_traceback_later(STALL_REPORT_SECONDS, repeat=True)
 
     def save(self, model):
         """Commit a newly scored model before the next calibration."""
@@ -194,6 +199,8 @@ def run_search(args, model, data):
         except Paused as exc:
             status = "paused"
             logging.info("Paused: %s", exc)
+        finally:
+            faulthandler.cancel_dump_traceback_later()
 
     scores = checkpoint.scores
     best_id, best_score = scores.get_best_model() if scores else (None, None)

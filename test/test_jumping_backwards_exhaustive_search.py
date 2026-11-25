@@ -1,6 +1,7 @@
 """Regression checks for the packed jumping-backwards search."""
 
 import unittest
+from unittest.mock import patch
 
 from modelSelector.criterion import AIC_c
 from modelSelector.model import SalientModelBase
@@ -99,6 +100,13 @@ class PackedSearchTests(unittest.TestCase):
         self.assertTrue(space.has_pending_submodels(0b110))
         space.discard(0)
         self.assertFalse(space.has_pending_submodels(0b110))
+
+    def test_inverse_checks_small_submodels_first(self):
+        space = _CandidateSpace(5)
+        inverse = 0b11110
+        with patch.object(space, "_remaining_at_size", wraps=space._remaining_at_size) as visit:
+            self.assertTrue(space.has_pending_submodels(inverse))
+        visit.assert_called_once_with(0, inverse, 0, 0)
 
     def test_inverse_jump_uses_the_best_fit_after_all_jump_children(self):
         weights = (3.0, 3.0, 0.2, 1.1, 1.1)
