@@ -180,7 +180,7 @@ def run_search(args, model, data):
         temporary.replace(settings)
 
     criterion = AIC_c()
-    engine = MultiProcessEngine(args.workers) if args.workers > 1 else SingleCoreEngine()
+    engine = MultiProcessEngine(args.workers, method="forkserver") if args.workers > 1 else SingleCoreEngine()
     jumps, status = None, "complete"
     with scores_path.open("a+b") as stream:
         checkpoint = Checkpoint(stream, model, criterion, args.max_new_fits)
