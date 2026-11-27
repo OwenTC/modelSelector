@@ -4,10 +4,10 @@ from itertools import combinations
 from math import comb
 from typing import Optional
 
-from ..criterion import AIC, CriterionBase
+from ..criterion import AIC, AIC_c, CriterionBase
 from ..model import SalientModelBase
 from ..result import ModelSelectionResult
-from .utils import _get_n_parameters_to_delete, _get_n_params_from_id
+from .utils import _get_n_parameters_to_delete
 
 
 def _size(mask: int) -> int:
@@ -83,9 +83,7 @@ class _CandidateSpace:
         """Clear newly excluded submodels at sizes still in the search."""
         size = _size(mask)
         first = max(previous + 1, size - self.max_size)
-        # Always let the zero-parameter model be fitted. The AICc bound helper
-        # only compares positive model sizes before returning a deletion depth.
-        last = min(depth, size - 1)
+        last = min(depth, size)
         if first > last:
             return
         bits = [bit for bit in self.bits if mask & bit]
@@ -114,11 +112,14 @@ def jumping_backwards_exhaustive_search(
     """
     Search submodels and return the selection result and jump count.
 
-    Each iteration fits the one-parameter deletions available at the start
-    of the level, then tries a jump by adding ranked parameters to the empty model.
-    Only the best fit in the jump step can trigger an inverse jump, and its
-    inverse must have a proper submodel that is still available.
-    Continue from an improving deletion or the largest remaining candidate.
+    The B-reverse schedule fits the available one-parameter deletions, then
+    searches from the empty mask by adding the most salient parameters first.
+    It also extends the current model by adding the least salient missing
+    parameters first, using the smallest fitted proper supermodel with an
+    available ranking and the full model for the remaining parameters.
+    Stop extending when the bound cannot prune models of the current size.
+    The jump count includes both forward passes. Continue from the best newly
+    fitted deletion or the largest remaining candidate.
     Supply a fitted supermodel and its score when continuing an existing result.
     Set saliency to a method supported by the model.
     The model's n_params includes any parameters fitted in every candidate.
@@ -141,8 +142,6 @@ def jumping_backwards_exhaustive_search(
     parameter_bits = dict(zip(active, candidates.bits))
     n_data = super_model.n_data
     current_mask = full_mask
-    current_model = super_model
-    current_score = result[super_model.id]
     number_of_jumps = 0
     saliency_options = {} if saliency is None else {"saliency": saliency}
 
@@ -169,16 +168,20 @@ def jumping_backwards_exhaustive_search(
     def exclude(mask: int) -> None:
         score, previous = fitted[mask]
         size = _size(mask)
-        if size < 2:
+        if size == 0:
             return
         # The criterion includes parameters fitted in every model. Mask sizes
         # count only the parameters whose inclusion can change.
-        depth = _get_n_parameters_to_delete(best_score, score, size + always_fitted, n_data, criterion)
+        threshold = best_score
+        if isinstance(criterion, AIC_c):
+            # Leave numerically tied AICc candidates eligible, as in the benchmark.
+            threshold += max(1e-8, 1e-12 * abs(best_score))
+        depth = _get_n_parameters_to_delete(threshold, score, size + always_fitted, n_data, criterion)
         if depth <= previous:
             return
         fitted[mask] = (score, depth)
         if mask == full_mask:
-            candidates.max_size = max(0, size - depth - 1)
+            candidates.max_size = max(-1, size - depth - 1)
         else:
             candidates.exclude_submodels(mask, previous, depth)
 
@@ -191,7 +194,17 @@ def jumping_backwards_exhaustive_search(
 
     refresh_exclusions()
 
-    def fit_candidate(mask: int) -> tuple[SalientModelBase, float]:
+    def rank_parameters(model: SalientModelBase) -> list[int]:
+        saliencies = sorted(
+            model.get_submodel_saliencies(**saliency_options),
+            key=lambda entry: entry[1],
+            reverse=True,
+        )
+        return [parameter_bits[index] for index, _ in saliencies]
+
+    rankings = {full_mask: rank_parameters(super_model)}
+
+    def fit_candidate(mask: int) -> float:
         nonlocal best_score
         model = type(super_model)(model_id(mask))
         model.fit(**kwargs)
@@ -199,58 +212,60 @@ def jumping_backwards_exhaustive_search(
         result[model.id] = score
         candidates.discard(mask)
         fitted[mask] = (score, 0)
+        rankings[mask] = rank_parameters(model)
         if score < best_score:
             best_score = score
             refresh_exclusions()
         else:
             exclude(mask)
-        return model, score
+        return score
 
     remaining = candidates.remaining()
     while True:
-        saliencies = sorted(
-            current_model.get_submodel_saliencies(**saliency_options),
-            key=lambda entry: entry[1],
-            reverse=True,
-        )
-        ranked_bits = [parameter_bits[index] for index, _ in saliencies]
-        improvement = None
+        ranked_bits = rankings[current_mask]
 
         # A better fit can tighten the bounds. Keep the already selected
         # deletions so those updates apply to the jump and later levels.
-        children = (current_mask & ~bit for bit in ranked_bits)
+        children = (current_mask ^ bit for bit in ranked_bits)
         available_children = [child for child in children if child in candidates]
         for child in available_children:
-            model, score = fit_candidate(child)
-            if score < current_score:
-                improvement = child, model, score
+            score = fit_candidate(child)
 
         # Jump after calibrating the deletions.
         prefix = 0
-        best_jump = None
         for bit in ranked_bits:
             prefix |= bit
             if prefix in candidates:
-                _, score = fit_candidate(prefix)
-                if best_jump is None or score < fitted[best_jump][0]:
-                    best_jump = prefix
+                score = fit_candidate(prefix)
                 number_of_jumps += 1
 
-        if best_jump is not None:
-            inverted = full_mask ^ best_jump
-            if (inverted not in fitted and _size(best_jump) <= _size(inverted)
-                    and candidates.has_pending_submodels(inverted)):
-                fit_candidate(inverted)
+        if current_mask != full_mask:
+            closest = min(
+                (mask for mask in rankings if mask != current_mask and mask & current_mask == current_mask),
+                key=_size,
+            )
+            missing = [bit for bit in reversed(rankings[closest]) if not current_mask & bit]
+            missing.extend(bit for bit in reversed(rankings[full_mask]) if not closest & bit)
+            extended = current_mask
+            for n_added, bit in enumerate(missing, start=1):
+                extended |= bit
+                if extended not in fitted:
+                    if not candidates.has_pending_submodels(extended):
+                        continue
+                    score = fit_candidate(extended)
+                    number_of_jumps += 1
+                if fitted[extended][1] < n_added:
+                    break
 
-        if improvement is not None:
-            current_mask, current_model, current_score = improvement
+        if available_children:
+            current_mask = min(available_children, key=lambda mask: (fitted[mask][0], mask))
             continue
 
         next_mask = next(remaining, None)
         if next_mask is None:
             break
         current_mask = next_mask
-        current_model, current_score = fit_candidate(next_mask)
+        fit_candidate(next_mask)
 
     if record_exclusions:
         for mask in range(candidates.n_models):
